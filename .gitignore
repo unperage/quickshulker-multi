@@ -50,3 +50,5 @@ replay_pid*
 .env/
 .env.*
 *profile*
+
+PLAN.md
