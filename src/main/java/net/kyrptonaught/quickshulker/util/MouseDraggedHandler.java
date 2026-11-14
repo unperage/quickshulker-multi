@@ -145,9 +145,11 @@ public class MouseDraggedHandler {
         // Record every press verbatim: which button the event really carries, and whether a drag is already armed.
         // The left-button events visible in the logs have no confirmed origin yet, so this is the evidence trail.
         //#if MC >= 1.21.10
+        if (DEBUG) {
         dbg("click: button=" + click.button()
                 + " modifiers=" + click.modifiers()
                 + " activeDrag=" + (dragMode == null ? "none" : dragMode));
+        }
         //#else
         //$$ dbg("click: button=" + button + " activeDrag=" + (dragMode == null ? "none" : dragMode));
         //#endif
@@ -173,7 +175,9 @@ public class MouseDraggedHandler {
             // The slot under the press decides the direction for the entire drag.
             dragMode = slot.hasItem() ? DragMode.PUT : DragMode.TAKE;
             DRAGGED_SLOTS.clear();
+            if (DEBUG) {
             dbg("press: mode=" + dragMode + " slot=" + slot.index);
+            }
             return true;
         }
         return false;
@@ -227,7 +231,9 @@ public class MouseDraggedHandler {
                 //#else
                 //$$ ((AbstractContainerScreenInvoker) screen).QS$onMouseClick(slot, slot.index, toContainerButton(button), ClickType.PICKUP);
                 //#endif
+                if (DEBUG) {
                 dbg((dragMode == DragMode.PUT ? "put: slot=" : "take: slot=") + slot.index);
+                }
             }
         }
         // Swallow every motion while a QuickShulker drag is running, including the ones that produced no click.
@@ -263,8 +269,10 @@ public class MouseDraggedHandler {
                 consumed = true;
             }
         }
+        if (DEBUG) {
         dbg("release: button=" + releasedButton + " slots=" + draggedCount
                 + " consumed=" + consumed + " carriedEmpty=" + screen.getMenu().getCarried().isEmpty());
+        }
         return consumed;
     }
 

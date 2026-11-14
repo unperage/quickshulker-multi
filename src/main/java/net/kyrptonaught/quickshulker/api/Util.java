@@ -63,7 +63,7 @@ public class Util {
      * working the same way they do for the inventory path.
      */
     /** TEMPORARY: guard tracing is on by default while the container-drop issue is being chased. */
-    private static final boolean DEBUG_GUARD = true;
+    private static final boolean DEBUG_GUARD = false;
 
     public static void openItemFromMenuSlot(Player player, int menuSlotIndex, boolean nest, boolean fromScreen) {
         if (menuSlotIndex < 0 || menuSlotIndex >= player.containerMenu.slots.size()) {

@@ -71,8 +71,7 @@ public class ClientUtil {
         //#else
         boolean fromScreen = Minecraft.getInstance().screen != null;
         //#endif
-        System.out.println("[QS-GUARD] client SendOpenPacket slot=" + slot + " fromScreen=" + fromScreen
-                + " stack=" + Minecraft.getInstance().player.getInventory().getItem(0).getItem());
+
         OpenShulkerPacket.sendOpenPacket(slot, QuickShulkerMod.getConfig().nestedScreens, fromScreen);
     }
 

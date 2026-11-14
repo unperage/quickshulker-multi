@@ -92,7 +92,7 @@ public abstract class ScreenMixin {
     }
 
     /** TEMPORARY: cursor tracing is on by default while the restore position is being chased. */
-    private static final boolean DEBUG_CURSOR = true;
+    private static final boolean DEBUG_CURSOR = false;
 
     /** Holding the configurable extra key while closing drops the whole nested chain instead of one level. */
     @Inject(method = "onClose", at = @At("HEAD"))

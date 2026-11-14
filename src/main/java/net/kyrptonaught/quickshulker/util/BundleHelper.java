@@ -75,28 +75,38 @@ public class BundleHelper {
     public static void markBundled(Slot slot) {
         long now = System.currentTimeMillis();
         JUST_BUNDLED.put(slot, now);
+        if (DEBUG) {
         dbg("markBundled slot=" + slot.index + " t=" + now + " size=" + JUST_BUNDLED.size());
+        }
     }
 
     public static boolean wasJustBundled(Slot slot) {
         Long markedAt = JUST_BUNDLED.get(slot);
         if (markedAt == null) {
+            if (DEBUG) {
             dbg("wasJustBundled slot=" + slot.index + " -> false (never marked)");
+            }
             return false;
         }
         long age = System.currentTimeMillis() - markedAt;
         if (age > JUST_BUNDLED_TTL_MS) {
             JUST_BUNDLED.remove(slot);
+            if (DEBUG) {
             dbg("wasJustBundled slot=" + slot.index + " -> false (expired age=" + age + "ms)");
+            }
             return false;
         }
+        if (DEBUG) {
         dbg("wasJustBundled slot=" + slot.index + " -> TRUE (age=" + age + "ms)");
+        }
         return true;
     }
 
     public static void clearJustBundled() {
         if (!JUST_BUNDLED.isEmpty()) {
+            if (DEBUG) {
             dbg("clearJustBundled size=" + JUST_BUNDLED.size());
+            }
         }
         JUST_BUNDLED.clear();
     }
@@ -140,20 +150,26 @@ public class BundleHelper {
             // This drag already put a stack into this slot; the click arriving now is the duplicate one that
             // follows the insert. Cancel it outright - returning null here would fall through to vanilla, which
             // places the carried shulker into the slot instead of doing nothing.
+            if (DEBUG) {
             dbg("unbundle SKIP slot=" + unbundleSlot.index + " reason=wasJustBundled");
+            }
             if (cir != null) cir.setReturnValue(true);
             return;
         }
         ItemStack output = unbundleItem(player, hostStack, unbundleSlot);
         if (output != null) {
+            if (DEBUG) {
             dbg("unbundle EXEC slot=" + unbundleSlot.index + " item=" + output.getCount() + "x" + output.getItem());
+            }
             unbundleSlot.setByPlayer(output);
             cir.setReturnValue(true);
         }
         else {
             // Nothing came out: the shulker is empty or the slot refused it. This click was ours, so
             // mark it handled - otherwise vanilla runs and drops the carried box into the slot.
+            if (DEBUG) {
             dbg("unbundle REFUSED slot=" + unbundleSlot.index + " (container dry or slot rejected)");
+            }
             if (cir != null) {
                 cir.setReturnValue(true);
             }

@@ -92,7 +92,7 @@ public class QuickShulkerModClient implements ClientModInitializer {
     private static final long PENDING_CURSOR_TTL_MS = 200L;
 
     /** TEMPORARY: cursor tracing is on by default while the restore position is being chased. */
-    private static final boolean DEBUG_CURSOR = true;
+    private static final boolean DEBUG_CURSOR = false;
 
     public static void rememberCursor(double x, double y) {
         pendingCursorX = x;

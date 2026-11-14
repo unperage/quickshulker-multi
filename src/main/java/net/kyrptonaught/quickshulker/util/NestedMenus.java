@@ -208,7 +208,7 @@ public final class NestedMenus {
     }
 
     /** TEMPORARY: nested-stack tracing is on by default while the cursor restore is being chased. */
-    private static final boolean DEBUG = true;
+    private static final boolean DEBUG = false;
 
     private static void debug(ServerPlayer player, String message) {
         if (DEBUG) System.out.println("[QS-NEST] " + player.getName().getString() + ": " + message);
