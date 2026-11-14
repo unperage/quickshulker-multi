@@ -2,7 +2,7 @@
 
 [English] | [[简体中文]](docs/README_zh_cn.md)
 
-Open containers straight from your inventory — no placing needed.
+Open containers straight from your inventory
 
 ### Requirements
 
@@ -13,11 +13,11 @@ Open containers straight from your inventory — no placing needed.
 
 [**Releases**](https://github.com/unperage/unpers-quickshulker/releases) — pick the jar matching your Minecraft version.
 
-### Supported containers
+### Supported containers (from quickshulker-multi)
 
-Shulker box (all 17 colours) · Ender chest · Crafting table · Stonecutter · Anvil (all 3 damage levels) · Loom · Smithing table · Grindstone
+Shulker box · Ender chest · Crafting table · Stonecutter · Anvil · Loom · Smithing table · Grindstone
 
-Each one can be switched off individually in the settings screen.
+Each one can be switched off individually
 
 ### Keys
 
@@ -25,25 +25,25 @@ Each one can be switched off individually in the settings screen.
 |---|---|---|
 | Open the held container | `K` | Options → Controls → Key Binds |
 | Open the settings screen | `KP +` | same |
-| Nested containers (hold) | `Left Shift` | settings screen |
-| Container memory (hold) | `Left Ctrl` | settings screen |
+| Nested containers (hold) | `Left Shift` | settings |
+| Container memory (hold) | `Left Ctrl` | settings |
 
 ### Mouse
 
 - Right-click a container in the inventory to open it
 - Right-click a container with an item to insert it
-- Right-click an item with a container to pick it up
-- Hold and drag to move stacks in bulk
+- Right-click an empty slot with a container to take an item out
+- Hold and drag to move items in bulk
 
 ### Optional (off by default)
 
-- **Nested containers** — open a container that sits inside another container
-- **Container memory** — opened containers stack; ESC goes back one level
-- **Static pointer** — the cursor stays where it was after a container closes
+- **Nested containers** — containers outside the inventory can be opened
+- **Container memory** — remembers the layers of nested containers you opened
+- **Static pointer** — puts the cursor back where it was
 
 ### Server control
 
-Operators can allow or block each container server-wide:
+Operators can allow or block each container:
 
 ```
 /uqs                        list every container and its state
@@ -52,7 +52,7 @@ Operators can allow or block each container server-wide:
 
 Tab completion suggests item ids and `all`. The list is saved to `config/quickshulker-server.properties`.
 
-Both sides must agree: a container opens only when the server allows it **and** the player has it enabled locally. A player's own switches never affect anyone else.
+Both sides must allow it: the server **and** the player locally. Players do not affect each other.
 
 ### License
 
