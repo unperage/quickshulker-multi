@@ -53,18 +53,51 @@ public class BundleHelper {
      * Slots the current drag has already put a stack into. Lives here rather than in the drag handler because this
      * class is reached from item clicks on a dedicated server too, and the drag handler is client-side flavoured -
      * referencing it from here is what crashed servers with NoClassDefFoundError.
+     * <p>
+     * Stored with a timestamp and expired on read. The old form was a bare Set that only the client ever cleared, so
+     * on a dedicated server every slot that had ever received a bundle stayed marked for the lifetime of the process:
+     * putting a stack into a slot once made that slot refuse every later unbundle, which looked exactly like
+     * "the item gets put back". A short TTL keeps the intended behaviour (ignore the duplicate click that follows an
+     * insert within the same interaction) without leaking state across separate actions.
      */
-    private static final java.util.Set<Slot> JUST_BUNDLED = new java.util.LinkedHashSet<>();
+    private static final java.util.Map<Slot, Long> JUST_BUNDLED = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** How long a bundle mark stays valid. Covers the duplicate click that follows an insert; nothing longer. */
+    public static final long JUST_BUNDLED_TTL_MS = 500L;
+
+    /** TEMPORARY: tracing while the "put back" behaviour is being chased. */
+    public static final boolean DEBUG = false;
+
+    private static void dbg(String message) {
+        if (DEBUG) System.out.println("[QS-DRAG] t=" + System.currentTimeMillis() + " " + message);
+    }
 
     public static void markBundled(Slot slot) {
-        JUST_BUNDLED.add(slot);
+        long now = System.currentTimeMillis();
+        JUST_BUNDLED.put(slot, now);
+        dbg("markBundled slot=" + slot.index + " t=" + now + " size=" + JUST_BUNDLED.size());
     }
 
     public static boolean wasJustBundled(Slot slot) {
-        return JUST_BUNDLED.contains(slot);
+        Long markedAt = JUST_BUNDLED.get(slot);
+        if (markedAt == null) {
+            dbg("wasJustBundled slot=" + slot.index + " -> false (never marked)");
+            return false;
+        }
+        long age = System.currentTimeMillis() - markedAt;
+        if (age > JUST_BUNDLED_TTL_MS) {
+            JUST_BUNDLED.remove(slot);
+            dbg("wasJustBundled slot=" + slot.index + " -> false (expired age=" + age + "ms)");
+            return false;
+        }
+        dbg("wasJustBundled slot=" + slot.index + " -> TRUE (age=" + age + "ms)");
+        return true;
     }
 
     public static void clearJustBundled() {
+        if (!JUST_BUNDLED.isEmpty()) {
+            dbg("clearJustBundled size=" + JUST_BUNDLED.size());
+        }
         JUST_BUNDLED.clear();
     }
     public static boolean shouldAttemptBundle(Player player, ClickAction clickType, ItemStack hostStack, ItemStack insertStack, boolean enabledInConfig) {
@@ -107,18 +140,23 @@ public class BundleHelper {
             // This drag already put a stack into this slot; the click arriving now is the duplicate one that
             // follows the insert. Cancel it outright - returning null here would fall through to vanilla, which
             // places the carried shulker into the slot instead of doing nothing.
+            dbg("unbundle SKIP slot=" + unbundleSlot.index + " reason=wasJustBundled");
             if (cir != null) cir.setReturnValue(true);
             return;
         }
         ItemStack output = unbundleItem(player, hostStack, unbundleSlot);
         if (output != null) {
+            dbg("unbundle EXEC slot=" + unbundleSlot.index + " item=" + output.getCount() + "x" + output.getItem());
             unbundleSlot.setByPlayer(output);
             cir.setReturnValue(true);
         }
-        else if (cir != null) {
+        else {
             // Nothing came out: the shulker is empty or the slot refused it. This click was ours, so
             // mark it handled - otherwise vanilla runs and drops the carried box into the slot.
-            cir.setReturnValue(true);
+            dbg("unbundle REFUSED slot=" + unbundleSlot.index + " (container dry or slot rejected)");
+            if (cir != null) {
+                cir.setReturnValue(true);
+            }
         }
     }
 

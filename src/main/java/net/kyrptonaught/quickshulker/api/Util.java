@@ -44,16 +44,16 @@ import org.jetbrains.annotations.NotNull;
 
 public class Util {
 
-    public static void openItem(Player player, int invSlot, boolean nest) {
+    public static void openItem(Player player, int invSlot, boolean nest, boolean fromScreen) {
         if (ItemInventoryContainer.isMenuSlot(invSlot)) {
-            openItemFromMenuSlot(player, ItemInventoryContainer.menuSlotOf(invSlot), nest);
+            openItemFromMenuSlot(player, ItemInventoryContainer.menuSlotOf(invSlot), nest, fromScreen);
             return;
         }
         if (invSlot < 0 || invSlot >= player.containerMenu.slots.size()) {
-            System.out.println("[QuickShulker Multi]: unknown slot opened");
+            System.out.println("[Unper's QuickShulker]: unknown slot opened");
             return;
         }
-        openItem(player, invSlot, player.containerMenu.slots.get(invSlot).getContainerSlot(), nest);
+        openItem(player, invSlot, player.containerMenu.slots.get(invSlot).getContainerSlot(), nest, fromScreen);
     }
 
     /**
@@ -62,7 +62,10 @@ public class Util {
      * slot, and the used-slot marker stores that menu slot, so closing and the "item vanished" guard keep
      * working the same way they do for the inventory path.
      */
-    public static void openItemFromMenuSlot(Player player, int menuSlotIndex, boolean nest) {
+    /** TEMPORARY: guard tracing is on by default while the container-drop issue is being chased. */
+    private static final boolean DEBUG_GUARD = true;
+
+    public static void openItemFromMenuSlot(Player player, int menuSlotIndex, boolean nest, boolean fromScreen) {
         if (menuSlotIndex < 0 || menuSlotIndex >= player.containerMenu.slots.size()) {
             return;
         }
@@ -81,12 +84,23 @@ public class Util {
             OpenInventoryPacket.send((ServerPlayer) player);
             return;
         }
-        QuickShulkerData qsData = QuickOpenableRegistry.getQuickie(stack.getItem());
+        QuickShulkerData qsData = QuickOpenableRegistry.getQuickieRaw(stack.getItem());
         if (qsData == null) {
             return;
         }
+        if (player instanceof ServerPlayer && !ServerRules.isAllowed(stack)) {
+            return;
+        }        if (player instanceof ServerPlayer serverPlayer) {
+            String itemId = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+            if (!ClientSwitches.allowsItem(serverPlayer, itemId)) {
+                if (DEBUG_GUARD) {
+                    System.out.println("[QS-GUARD] server denied by client switches: " + itemId);
+                }
+                return;
+            }
+        }
         if (player instanceof ServerPlayer sp) {
-            NestedMenus.captureCurrent(sp, nest);
+            NestedMenus.captureCurrent(sp, nest, fromScreen);
             NestedMenus.beginOpening(sp);
         }
         try {
@@ -114,7 +128,7 @@ public class Util {
         if (stack.isEmpty()) return;
         QuickShulkerData qsData = QuickOpenableRegistry.getQuickie(stack.getItem());
         if (qsData == null) return;
-        if (!restoring) NestedMenus.captureCurrent(player, true);
+        if (!restoring) NestedMenus.captureCurrent(player, true, true);
         NestedMenus.beginOpening(player);
         try {
             qsData.openConsumer.accept(player, stack);
@@ -124,7 +138,12 @@ public class Util {
         if (QuickShulkerMod.getConfig().playSound) playSound(player, qsData.getSound(stack, true));
     }
 
-    public static void openItem(Player player, int invSlot, int playerInvIndex, boolean nest) {
+    public static void openItem(Player player, int invSlot, int playerInvIndex, boolean nest, boolean fromScreen) {
+        if (DEBUG_GUARD) {
+            System.out.println("[QS-GUARD] server Util.openItem ENTER invSlot=" + invSlot
+                    + " playerInvIndex=" + playerInvIndex + " nest=" + nest + " fromScreen=" + fromScreen
+                    + " menu=" + player.containerMenu.getClass().getSimpleName());
+        }
         if (QuickShulkerMod.getConfig().rightClickClose && playerInvIndex == ((ItemInventoryContainer) player.containerMenu).QS$getUsedSlotInPlayerInv()) {
             ((ServerPlayer) player).closeContainer();
             OpenInventoryPacket.send((ServerPlayer) player);
@@ -132,10 +151,34 @@ public class Util {
         }
         ItemStack stack = player.getInventory().getItem(playerInvIndex);
         //stack.removeSubNbt(QuickShulkerMod.MOD_ID);
-        QuickShulkerData qsData = QuickOpenableRegistry.getQuickie(stack.getItem());
+        // The server's own allow list, managed by /qs. Independent of the client config: the player decides what
+        // they want, the server decides what is permitted here, and either can say no.
+        if (player instanceof ServerPlayer && !ServerRules.isAllowed(stack)) {
+            if (DEBUG_GUARD) {
+                System.out.println("[QS-GUARD] server denied by /qs rules: " + stack.getItem());
+            }
+            return;
+        }        if (player instanceof ServerPlayer serverPlayer) {
+            String itemId = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
+            if (!ClientSwitches.allowsItem(serverPlayer, itemId)) {
+                if (DEBUG_GUARD) {
+                    System.out.println("[QS-GUARD] server denied by client switches: " + itemId);
+                }
+                return;
+            }
+        }
+        // Deliberately the raw lookup: the enabled switches live in each player's own config file, and this is the
+        // server. The server's say comes from /uqs (ServerRules) and nothing else - reading getQuickie() here made the
+        // server obey its own copy of the client's switches, which is why a client-disabled item still opened.
+        QuickShulkerData qsData = QuickOpenableRegistry.getQuickieRaw(stack.getItem());
+        if (DEBUG_GUARD) {
+            System.out.println("[QS-GUARD] server Util.openItem stack=" + stack.getItem()
+                    + " count=" + stack.getCount() + " qsData=" + (qsData == null ? "NULL(unregistered)" : "present")
+                    + " serverAllowed=" + ServerRules.isAllowed(stack));
+        }
         if (qsData != null) {
             if (player instanceof ServerPlayer sp) {
-                NestedMenus.captureCurrent(sp, nest);
+                NestedMenus.captureCurrent(sp, nest, fromScreen);
                 NestedMenus.beginOpening(sp);
             }
             try {
@@ -152,8 +195,23 @@ public class Util {
 
     public static Boolean isOpenableItem(ItemStack stack) {
         QuickShulkerData qsdata = QuickOpenableRegistry.getQuickie(stack.getItem());
-        if (qsdata == null) return false;
-        return qsdata.ignoreSingleStackCheck || stack.getCount() <= 1;
+        if (qsdata == null) {
+            if (DEBUG_GUARD) {
+                System.out.println("[QS-GUARD] isOpenableItem " + stack.getItem()
+                        + " -> FALSE (not registered, disabled, or unsupported menu)");
+            }
+            return false;
+        }
+        // Only a lone item can be opened in place. A stack of workbenches or ender chests is not one container -
+        // opening it would have to pick one of the copies out of the stack and leave the rest untouched, which is
+        // never what the player meant. "Ignore single stack check" used to bypass this for the stackable container
+        // items; that is deliberately no longer honoured.
+        boolean result = stack.getCount() == 1;
+        if (DEBUG_GUARD) {
+            System.out.println("[QS-GUARD] isOpenableItem " + stack.getItem()
+                    + " count=" + stack.getCount() + " -> " + result);
+        }
+        return result;
     }
 
     public static Container getQuickItemInventory(Player player, ItemStack stack) {
@@ -247,6 +305,13 @@ public class Util {
             public void isValid() {
                 ItemStack stackInSlot = player.getInventory().getItem(slotID);
                 if (stackInSlot.isEmpty() || !areItemsEqual(stack, stackInSlot)) {
+                    if (DEBUG_GUARD) {
+                        System.out.println("[QS-GUARD] force close (inventory) slot=" + slotID
+                                + " opened=" + stack.getItem().getDescriptionId() + "x" + stack.getCount()
+                                + " now=" + (stackInSlot.isEmpty() ? "empty" : stackInSlot.getItem().getDescriptionId() + "x" + stackInSlot.getCount())
+                                + " sameItem=" + ItemStack.isSameItem(stack, stackInSlot)
+                                + " matches=" + ItemStack.matches(stack, stackInSlot));
+                    }
                     ((ServerPlayer) player).closeContainer();
                 }
             }

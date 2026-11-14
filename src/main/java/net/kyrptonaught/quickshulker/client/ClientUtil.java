@@ -63,7 +63,17 @@ public class ClientUtil {
 
     private static void SendOpenPacket(int slot) {
         // The nesting switch is a client setting, so it has to ride along: the server has no way to read it.
-        OpenShulkerPacket.sendOpenPacket(slot, QuickShulkerMod.getConfig().nestedScreens);
+        // So does the origin: a screen being open means the request came from a slot on that screen (inventory,
+        // creative inventory, another container) and closing should return there, while no screen means the item
+        // was used from the world and closing should land back in the world.
+        //#if MC >= 26.2
+        //$$ boolean fromScreen = Minecraft.getInstance().gui.screen() != null;
+        //#else
+        boolean fromScreen = Minecraft.getInstance().screen != null;
+        //#endif
+        System.out.println("[QS-GUARD] client SendOpenPacket slot=" + slot + " fromScreen=" + fromScreen
+                + " stack=" + Minecraft.getInstance().player.getInventory().getItem(0).getItem());
+        OpenShulkerPacket.sendOpenPacket(slot, QuickShulkerMod.getConfig().nestedScreens, fromScreen);
     }
 
     public static boolean isCreativeScreen(Player player) {

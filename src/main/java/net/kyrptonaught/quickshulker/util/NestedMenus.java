@@ -36,6 +36,7 @@ import net.minecraft.world.SimpleMenuProvider;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ChestMenu;
+import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.ShulkerBoxMenu;
 import net.minecraft.world.inventory.Slot;
@@ -119,13 +120,59 @@ public final class NestedMenus {
     /**
      * Called right before a container is quick-opened: records whatever the player is looking at now, so it can
      * come back once the new container is closed.
+     *
+     * @param nest       the client's "remember containers" setting; only relevant when the item was used from the
+     *                   world, where recording a level is what makes the chain nested
+     * @param fromScreen whether the request came from an open screen. A container opened from the inventory or from
+     *                   another container must always return there when closed, regardless of the nesting setting -
+     *                   that is plain "go back", not nesting. A container opened from the world must not record
+     *                   anything unless nesting is on: closing it should land back in the world, and recording the
+     *                   player's InventoryMenu as "the level underneath" was what sent them to the inventory instead.
      */
-    public static void captureCurrent(ServerPlayer player, boolean nest) {
-        if (!nest || isRestoring(player)) {
-            debug(player, "capture skipped nest=" + nest + " restoring=" + isRestoring(player));
+    public static void captureCurrent(ServerPlayer player, boolean nest, boolean fromScreen) {
+        if (isRestoring(player)) {
+            debug(player, "capture skipped restoring");
             return;
         }
         AbstractContainerMenu menu = player.containerMenu;
+        if (fromScreen) {
+            // Only the two container types this class can actually rebuild are worth recording. Anything else
+            // (crafting table, anvil, the player inventory itself) has no matching Frame kind, and recording it as
+            // KIND_INVENTORY made closing a shulker opened from a crafting table reopen the inventory instead of
+            // simply returning to the world - which also threw away the cursor position captured for that screen.
+            if (menu instanceof ChestMenu chest && chest.getContainer() != null) {
+                push(player, new Frame(Frame.KIND_CHEST, chest.getContainer(), chest.getRowCount()));
+                debug(player, "capture(fromScreen) chest rows=" + chest.getRowCount() + " depth=" + depth(player));
+                return;
+            }
+            if (menu instanceof ShulkerBoxMenu) {
+                Container container = containerOf(menu);
+                if (container != null) {
+                    push(player, new Frame(Frame.KIND_SHULKER, container, 3));
+                    debug(player, "capture(fromScreen) shulker size=" + container.getContainerSize() + " depth=" + depth(player));
+                    return;
+                }
+            }
+            if (menu instanceof InventoryMenu) {
+                push(player, new Frame(Frame.KIND_INVENTORY, null, 0));
+                debug(player, "capture(fromScreen) inventory depth=" + depth(player));
+                return;
+            }
+            debug(player, "capture(fromScreen) skipped, unsupported menu=" + menu.getClass().getSimpleName());
+            return;
+        }
+        if (!nest) {
+            debug(player, "capture skipped nest=false fromScreen=false");
+            return;
+        }
+        // Opened from the world with the item in hand. The server's menu is the player's plain InventoryMenu
+        // here - that is the default menu a walking player has, not a screen they were looking at. Recording it
+        // as the level underneath made closing a hand-opened container reopen the inventory instead of simply
+        // returning to the world, which is the single most common case and must stay vanilla.
+        if (menu instanceof InventoryMenu) {
+            debug(player, "capture skipped, opened from world (menu=InventoryMenu)");
+            return;
+        }
         if (menu instanceof ChestMenu chest && chest.getContainer() != null) {
             push(player, new Frame(Frame.KIND_CHEST, chest.getContainer(), chest.getRowCount()));
             debug(player, "capture chest rows=" + chest.getRowCount() + " depth=" + depth(player));
@@ -160,8 +207,8 @@ public final class NestedMenus {
         return stack == null ? 0 : stack.size();
     }
 
-    /** Opt-in tracing: start the client with -Dquickshulker.debug.nested=true. */
-    private static final boolean DEBUG = Boolean.getBoolean("quickshulker.debug.nested");
+    /** TEMPORARY: nested-stack tracing is on by default while the cursor restore is being chased. */
+    private static final boolean DEBUG = true;
 
     private static void debug(ServerPlayer player, String message) {
         if (DEBUG) System.out.println("[QS-NEST] " + player.getName().getString() + ": " + message);

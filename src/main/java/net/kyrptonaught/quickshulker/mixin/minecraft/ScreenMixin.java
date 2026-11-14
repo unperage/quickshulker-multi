@@ -31,6 +31,7 @@ import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.api.Environment;
 import net.kyrptonaught.quickshulker.QuickShulkerMod;
+import net.kyrptonaught.quickshulker.api.ItemInventoryContainer;
 import net.kyrptonaught.quickshulker.client.ClientUtil;
 import net.kyrptonaught.quickshulker.client.CursorFollower;
 import net.kyrptonaught.quickshulker.client.QuickShulkerModClient;
@@ -79,13 +80,46 @@ public abstract class ScreenMixin {
         // recipe book can move the panel again after that. CursorFollower therefore waits for the target to
         // settle on a rendered frame instead of snapping to the coordinates it would read right here.
         CursorFollower.beginSnap((AbstractContainerScreen<?>) (Object) this);
+        // Restoring a nested level reopens it through a plain server-side openMenu, so the screen that comes back
+        // is a vanilla one and no QuickShulker packet carries the pointer position. This hook runs for every
+        // container screen being initialised, which covers both "back to the previous container" and "back to the
+        // inventory"; restoreCursor() is a no-op unless a position was captured when the old screen closed.
+        Minecraft client = Minecraft.getInstance();
+        if (DEBUG_CURSOR) {
+            System.out.println("[QS-CURSOR] init " + this.getClass().getSimpleName());
+        }
+        if (client != null) QuickShulkerModClient.restoreCursor(client);
     }
+
+    /** TEMPORARY: cursor tracing is on by default while the restore position is being chased. */
+    private static final boolean DEBUG_CURSOR = true;
 
     /** Holding the configurable extra key while closing drops the whole nested chain instead of one level. */
     @Inject(method = "onClose", at = @At("HEAD"))
     private void QS$closeAllNested(CallbackInfo ci) {
-        if (QuickShulkerMod.getConfig().nestedScreens && QuickShulkerMod.getConfig().extraKey.isKeybindPressed()) {
-            CloseAllPacket.send();
+        if (DEBUG_CURSOR) {
+            System.out.println("[QS-CURSOR] close nestedScreens=" + QuickShulkerMod.getConfig().nestedScreens
+                    + " menu=" + this.menu.getClass().getSimpleName()
+                    + " quickOpened=" + (this.menu instanceof ItemInventoryContainer q && q.QS$isQuickOpened()));
+        }
+        // Capture the pointer whenever a quick-opened container is closed, regardless of the nesting setting.
+        // Going back to the inventory or to the container underneath is plain "return where I came from" and keeps
+        // the cursor where the player left it; only the nesting option decides whether the chain is remembered.
+        if (this.menu instanceof ItemInventoryContainer) {
+            Minecraft client = Minecraft.getInstance();
+            if (client != null) {
+                QuickShulkerModClient.rememberCursor(client.mouseHandler.xpos(), client.mouseHandler.ypos());
+            }
+        }
+        if (QuickShulkerMod.getConfig().nestedScreens) {
+            // Two ways to ask for "leave the whole chain": hold the key while closing (default), or press it once
+            // beforehand to arm the toggle. The toggle lives in the config file so it survives a restart.
+            boolean leaveAll = QuickShulkerMod.getConfig().nestedMode
+                    ? QuickShulkerMod.getConfig().closeAllToggled
+                    : QuickShulkerModClient.memoryKeyHeld();
+            if (leaveAll) {
+                CloseAllPacket.send();
+            }
         }
     }
 
@@ -162,11 +196,11 @@ public abstract class ScreenMixin {
             return false;
         }
         // Cross-container open: the stack sits in a chest, an ender chest or another open container.
-        // Only allowed with the option on and the configurable extra key held down.
+        // Only allowed with the option on and the nested-container key held down.
         if (!QuickShulkerMod.getConfig().crossContainerOpen) return false;
         Minecraft client = Minecraft.getInstance();
         if (client.player == null) return false;
-        if (!QuickShulkerMod.getConfig().extraKey.isKeybindPressed()) return false;
+        if (!QuickShulkerModClient.nestedKeyHeld()) return false;
         if (ClientUtil.CheckAndSendMenuSlot(stack, id)) {
             // No slot to follow here: the source slot lives in another container, so the item the player came
             // from is not on the screen that is about to open. Keep the pointer at its current position instead

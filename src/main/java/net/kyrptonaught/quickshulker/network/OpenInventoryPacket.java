@@ -51,6 +51,9 @@ public class OpenInventoryPacket implements CustomPacketPayload {
     public static final StreamCodec<FriendlyByteBuf, OpenInventoryPacket> CODEC = StreamCodec.ofMember(OpenInventoryPacket::write, buf -> new OpenInventoryPacket());
 
     public static void send(ServerPlayer player) {
+        // Guarded the same way as the ender chest sync: only clients that actually registered QuickShulker's channel
+        // get the packet. Without this the server pushed mod-only payloads at vanilla clients.
+        if (!ServerPlayNetworking.canSend(player, OPEN_INV_ID)) return;
         ServerPlayNetworking.send(player, new OpenInventoryPacket());
     }
 

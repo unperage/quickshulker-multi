@@ -54,6 +54,9 @@ public class EnderChestS2CSyncPacket {
         public static final StreamCodec<RegistryFriendlyByteBuf, S2CEChestContentPacket> CODEC = StreamCodec.composite(ItemStack.OPTIONAL_LIST_STREAM_CODEC, S2CEChestContentPacket::itemStacks, S2CEChestContentPacket::new);
 
         public static void send(ServerPlayer player, List<ItemStack> itemStacks) {
+            // Players without QuickShulker (vanilla clients, or some other fork) must never receive this: it is sent
+            // unprompted on join, so unlike the request/response packets there is no client action gating it.
+            if (!ServerPlayNetworking.canSend(player, S2C_ECHEST_CONTENT_PACKET_ID)) return;
             ServerPlayNetworking.send(player, new S2CEChestContentPacket(itemStacks));
         }
 
@@ -77,6 +80,7 @@ public class EnderChestS2CSyncPacket {
                 buf -> new S2CEChestSlotPacket(buf.readInt(), PacketUtils.readItemStack(buf)));
 
         public static void send(ServerPlayer player, int slotId, ItemStack itemStack) {
+            if (!ServerPlayNetworking.canSend(player, S2C_ECHEST_SLOT_PACKET_ID)) return;
             ServerPlayNetworking.send(player, new S2CEChestSlotPacket(slotId, itemStack));
         }
 

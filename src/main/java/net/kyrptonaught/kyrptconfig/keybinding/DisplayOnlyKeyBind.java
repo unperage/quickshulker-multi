@@ -28,6 +28,7 @@
 package net.kyrptonaught.kyrptconfig.keybinding;
 
 import net.minecraft.client.KeyMapping;
+import net.minecraft.client.Minecraft;
 import com.mojang.blaze3d.platform.InputConstants;
 import org.jetbrains.annotations.NotNull;
 
@@ -76,21 +77,47 @@ public class DisplayOnlyKeyBind extends KeyMapping {
         });
         this.keySet = keySet;
         updateSetKey();
-        this.readyToPersist = true;
+        // Not ready yet: Options will feed this mapping a key from options.txt during startup, and that value must
+        // not overwrite the config. reapplyConfiguredKeys() calls markReady() once the client is up.
+        this.readyToPersist = false;
     }
 
     public void setKey(InputConstants.@NotNull Key boundKey) {
         super.setKey(boundKey);
-        // Deliberately not writing the value back here. Minecraft seeds every mapping with its default key during
-        // startup, and that call is indistinguishable from a real edit at this level - whichever guard is used,
-        // the default ends up overwriting the player's choice. Persistence belongs to the config screen, which
-        // knows a player edited it; this mapping only mirrors the config (see syncFromConfig).
-        if (!SUPPRESS_PERSIST)
+        // A real edit reaches this override from two places: vanilla's controls screen, and the seeding pass in
+        // KeyMapping#resetMapping. The latter is excluded by SUPPRESS_PERSIST. For the former the new key has to be
+        // written into the mod config as well - the config is the source of truth (reapplyConfiguredKeys() pushes it
+        // back into this mapping every tick), so persisting only options.txt left the config on the old value and the
+        // player's choice was reverted on the very next tick and on every restart.
+        //
+        // readyToPersist guards the startup window: Options feeds every mapping the key it read from options.txt,
+        // which has no entry for these mappings, so it writes UNKNOWN back into the config before the client has even
+        // finished starting up. That is what made a rebound key look like it reset on restart. Nothing may persist
+        // until reapplyConfiguredKeys() has run once.
+        if (!SUPPRESS_PERSIST && readyToPersist) {
+            if (customKeyBinding != null && !boundKey.getName().equals(customKeyBinding.rawKey)) {
+                // Goes through setRaw so the config consumer stays in charge of keeping this mapping in sync;
+                // the comparison in that consumer stops it from recursing back into this method.
+                customKeyBinding.setRaw(boundKey.getName());
+            }
             keySet.accept(boundKey);
+        }
+    }
+
+    /** Opens the persistent window: called once the client finished starting and the config value has been applied. */
+    public void markReady() {
+        this.readyToPersist = true;
     }
 
     public void updateSetKey() {
         super.setKey(customKeyBinding.getKeybinding().orElse(InputConstants.UNKNOWN));
+        // The config screen edits the config directly, which never touches options.txt. Without this the vanilla
+        // options loader would read the stale key back on the next launch and - now that setKey persists - write that
+        // stale value over the player's choice.
+        Minecraft client = Minecraft.getInstance();
+        if (client != null && client.options != null) {
+            client.options.save();
+        }
     }
 
     /**

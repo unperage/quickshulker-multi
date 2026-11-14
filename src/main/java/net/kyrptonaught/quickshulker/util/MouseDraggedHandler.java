@@ -53,32 +53,49 @@ import net.minecraft.client.input.MouseButtonEvent;
 //#else
 //#endif
 
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.Set;
 
+/**
+ * Drag-to-transfer for quick opened containers, following the upstream implementation: every slot the pointer
+ * passes over is clicked through vanilla's own {@code slotClicked}, and vanilla's quick-craft machinery is left
+ * alone.
+ * <p>
+ * Two things are kept on top of upstream, both required for 26.3:
+ * <ul>
+ *   <li>{@code InputConstants.MOUSE_BUTTON_RIGHT} instead of the literal {@code 1}. 26.3 replaced GLFW with SDL,
+ *       which numbers the buttons left = 1, middle = 2, right = 3 - upstream's {@code == 1} therefore never matches
+ *       a right click and the drag never starts.</li>
+ *   <li>{@link #toContainerButton(int)} around the button handed to {@code slotClicked}. That method expects the
+ *       container protocol's button (0 = left, 1 = right); passing the raw SDL id makes the PICKUP branch ignore
+ *       the click, so every dragged slot silently did nothing.</li>
+ * </ul>
+ */
 public class MouseDraggedHandler {
-    private static final Set<Slot> DRAGGED_SLOTS = Sets.newLinkedHashSet();
-
-    private static DragMode dragMode;
+    private static final Set<Slot> DRAGGED_SLOTS = Sets.newHashSet();
     /**
-     * Slots the pointer has passed over but not applied yet. They are applied on the next rendered frame:
-     * issuing the click from inside {@code mouseClicked}/{@code mouseDragged} runs against a menu vanilla is
-     * still updating, so the click lands on the wrong slot and the one the pointer started on is lost.
+     * Direction of the drag in progress, fixed at the moment of the press and kept until the button is released.
+     * <p>
+     * The slot the press landed on decides it: empty means the whole drag takes stacks out of the container,
+     * occupied means the whole drag puts stacks in. It does not flip per slot, so sweeping back over an area that
+     * was just emptied keeps taking instead of immediately putting everything back.
      */
-    private static final Deque<Slot> PENDING = new ArrayDeque<>();
+    private static DragMode dragMode;
 
-    /** Opt-in tracing: start the client with -Dquickshulker.debug.drag=true. */
-    public static final boolean DEBUG = Boolean.getBoolean("quickshulker.debug.drag");
+    /** TEMPORARY: tracing is on by default while the unbundle failure is being chased. */
+    public static final boolean DEBUG = false;
 
     public static void dbg(String message) {
         if (DEBUG) System.out.println("[QS-DRAG] " + message);
     }
 
-    /** TEMPORARY diagnostic helper. */
-    public static String desc(ItemStack stack) {
-        if (stack == null) return "null";
-        return (stack.isEmpty() ? "empty" : stack.getItem().getDescriptionId()) + " x" + stack.getCount();
+    /**
+     * True while a QuickShulker drag owns the right button. Read by the Mouse Tweaks compat mixin, which has to
+     * stand down for the duration of the drag: Mouse Tweaks clicks the slot the drag started on the moment the
+     * pointer leaves it, and with a container on the cursor that click drops the container into that slot - the
+     * "first slot is always skipped instead of filled" symptom.
+     */
+    public static boolean isDragActive() {
+        return dragMode != null;
     }
 
     public static boolean canInsertIntoContainer(Player player, ItemStack hostStack, ItemStack insertStack) {
@@ -101,72 +118,11 @@ public class MouseDraggedHandler {
     }
 
     /**
-     * Vanilla's own drag shortcut only ever collects slots from mouse-motion events: the press that opens a
-     * drag clears {@code quickCraftSlots} and never registers the slot it landed on, so the stack the cursor
-     * started from is left untouched until the pointer leaves it and comes back - "the first stack the
-     * pointer passed over is always missed". Register that slot right after vanilla has set the drag up.
-     */
-    public static void afterMouseClick(AbstractContainerScreen<?> screen, double mouseX, double mouseY) {
-        AbstractContainerScreenInvoker invoker = (AbstractContainerScreenInvoker) screen;
-        dbg("afterClick: isQuickCrafting=" + invoker.QS$isQuickCrafting()
-                + " quickCraftSlots=" + (invoker.QS$getQuickCraftSlots() == null ? "null" : invoker.QS$getQuickCraftSlots().size())
-                + " carried=" + desc(screen.getMenu().getCarried()));
-        // Nothing to add here on purpose. Vanilla's quick-craft set means "spread the carried stack across these
-        // slots", which is the opposite of what a QuickShulker drag does (move those slots' contents into the
-        // carried box). Registering the starting slot there made vanilla hand the box itself to that slot on
-        // release - the "it goes in and immediately comes back out" behaviour, and in creative it dropped the box.
-    }
-
-    /**
-     * Applies the active drag to a single slot. Shared by the press that opens the drag and by every slot
-     * the cursor passes over while the button is held, so the stack the drag started on is not skipped.
-     */
-    private static boolean executeSlot(AbstractContainerScreen<?> screen, Slot slot, ItemStack itemStack, int rawButton) {
-        if (dragMode == null || slot == null) return false;
-        Minecraft client = ((ScreenAccessor) screen).getClient();
-        if (client.player == null) return false;
-        AbstractContainerMenu handler = screen.getMenu();
-        if (!handler.canDragTo(slot) && !slot.mayPickup(client.player)) {
-            dbg("apply: slot " + slot.index + " cannot drag or pickup");
-            return false;
-        }
-        boolean bundle = dragMode == DragMode.BUNDLE
-                && slot.hasItem()
-                && canInsertIntoContainer(client.player, itemStack, slot.getItem())
-                && !ShulkerUtils.isShulkerItem(slot.getItem());
-        boolean unbundle = dragMode == DragMode.UNBUNDLE
-                && !slot.hasItem()
-                && !isContainerEmpty(client.player, itemStack);
-        if (!bundle && !unbundle) {
-            dbg("apply: slot " + slot.index + " rejected mode=" + dragMode + " hasItem=" + slot.hasItem()
-                    + " carried=" + desc(itemStack) + " slotItem=" + desc(slot.getItem()));
-            return false;
-        }
-        DRAGGED_SLOTS.add(slot);
-        AbstractContainerMenu playerMenu = client.player.containerMenu;
-        dbg("execute: slot " + slot.index + " " + (bundle ? "BUNDLE" : "UNBUNDLE") + " raw=" + rawButton + " -> containerButton=" + toContainerButton(rawButton)
-                + " screenMenuId=" + handler.containerId + " playerMenuId=" + playerMenu.containerId
-                + " slotHasItem=" + slot.hasItem() + " carried=" + desc(itemStack));
-        // Send through the player's live menu id. The screen's own menu can still carry the generic id 0, and a
-        // click packet whose container id does not match the server menu is silently dropped - which is exactly
-        // why the slot the drag started on never changed.
-        //#if MC >= 26.1
-        //$$ client.gameMode.handleContainerInput(playerMenu.containerId, slot.index, toContainerButton(rawButton), ContainerInput.PICKUP, client.player);
-        //#elseif MC >= 1.21.10
-        client.gameMode.handleInventoryMouseClick(playerMenu.containerId, slot.index, toContainerButton(rawButton), ClickType.PICKUP, client.player);
-        //#else
-        //$$ client.gameMode.handleInventoryMouseClick(playerMenu.containerId, slot.index, toContainerButton(rawButton), ClickType.PICKUP, client.player);
-        //#endif
-        return true;
-    }
-
-    /**
      * Translates a raw platform mouse button into the id the container click protocol uses (0 = left,
      * 1 = right). 26.3 moved the mouse layer from GLFW to SDL, which numbers the buttons differently
      * (left = 1, middle = 2, right = 3), and vanilla converts them back inside
      * {@code AbstractContainerScreen#getContainerClickButton} before it calls {@code slotClicked(...)}.
-     * Anything calling that method directly has to translate as well: the raw SDL id is not a button the
-     * PICKUP branch understands, so on 26.3 every dragged slot was silently a no-op.
+     * Anything calling that method directly has to translate as well.
      */
     //#if MC >= 26.3
     //$$ private static int toContainerButton(int rawButton) {
@@ -185,23 +141,41 @@ public class MouseDraggedHandler {
     //#else
     //$$ public static boolean beforeMouseClick(AbstractContainerScreen<?> screen, double mouseX, double mouseY, int button) {
     //#endif
-        // Set the mode here but let the press through: vanilla's own click handles the starting slot.
         if (!QuickShulkerMod.getConfig().supportsMouseDragged) return false;
-        Minecraft client = ((ScreenAccessor) screen).getClient();
-        if (client.player == null) return false;
+        // Record every press verbatim: which button the event really carries, and whether a drag is already armed.
+        // The left-button events visible in the logs have no confirmed origin yet, so this is the evidence trail.
         //#if MC >= 1.21.10
-        if (click.button() != InputConstants.MOUSE_BUTTON_RIGHT) return false;
-        Slot pressed = ((AbstractContainerScreenInvoker) screen).QS$getSlotAt(click.x(), click.y());
+        dbg("click: button=" + click.button()
+                + " modifiers=" + click.modifiers()
+                + " activeDrag=" + (dragMode == null ? "none" : dragMode));
         //#else
-        //$$ if (button != 1) return false;
-        //$$ Slot pressed = ((AbstractContainerScreenInvoker) screen).QS$getSlotAt(mouseX, mouseY);
+        //$$ dbg("click: button=" + button + " activeDrag=" + (dragMode == null ? "none" : dragMode));
         //#endif
-        if (pressed == null) return false;
-        if (Util.getQuickItemInventory(client.player, screen.getMenu().getCarried()) == null) return false;
-        dragMode = pressed.hasItem() ? DragMode.BUNDLE : DragMode.UNBUNDLE;
-        DRAGGED_SLOTS.clear();
-        PENDING.clear();
-        dbg("press: mode=" + dragMode + " start=" + pressed.index);
+        // A drag is already running: swallow presses of any other button. Vanilla would read a left click on an
+        // empty slot while a container sits on the cursor as "put it there", which drops the box back into the
+        // inventory in the middle of a transfer.
+        //#if MC >= 1.21.10
+        if (dragMode != null && click.button() != InputConstants.MOUSE_BUTTON_RIGHT) return true;
+        //#else
+        //$$ if (dragMode != null && button != 1) return true;
+        //#endif
+        //#if MC >= 1.21.10
+        Slot slot = ((AbstractContainerScreenInvoker) screen).QS$getSlotAt(click.x(), click.y());
+        if(slot != null && click.button() == InputConstants.MOUSE_BUTTON_RIGHT){
+        //#else
+        //$$ Slot slot = ((AbstractContainerScreenInvoker) screen).QS$getSlotAt(mouseX, mouseY);
+        //$$ if (slot != null && button == 1) {
+        //#endif
+            Minecraft client = ((ScreenAccessor) screen).getClient();
+            ItemStack itemStack = screen.getMenu().getCarried();
+            Container inv = Util.getQuickItemInventory(client.player, itemStack);
+            if (inv == null) return false;
+            // The slot under the press decides the direction for the entire drag.
+            dragMode = slot.hasItem() ? DragMode.PUT : DragMode.TAKE;
+            DRAGGED_SLOTS.clear();
+            dbg("press: mode=" + dragMode + " slot=" + slot.index);
+            return true;
+        }
         return false;
     }
 
@@ -210,31 +184,57 @@ public class MouseDraggedHandler {
     //#else
     //$$ public static boolean beforeMouseDragged(AbstractContainerScreen<?> screen, double mouseX, double mouseY, int button) {
     //#endif
-        //#if MC >= 1.21.10
-        if (dragMode == null) return false;
-        if (click.button() != InputConstants.MOUSE_BUTTON_RIGHT) {
-            dragMode = null;
-            DRAGGED_SLOTS.clear();
+        if (!QuickShulkerMod.getConfig().supportsMouseDragged) {
             return false;
         }
-        AbstractContainerScreenInvoker invoker = (AbstractContainerScreenInvoker) screen;
-        // Resolve the slot from the event coordinates, not from the screen's hoveredSlot field: vanilla only
-        // refreshes that field on a move event, so during a drag it still points at the slot the press landed on -
-        // which is why every dragged step was applied to the first slot instead of the one under the pointer.
-        Slot slot = invoker.QS$getSlotAt(click.x(), click.y());
-        dbg("drag: x=" + click.x() + " y=" + click.y() + " slot=" + (slot == null ? "null" : slot.index));
-        if (slot != null && !DRAGGED_SLOTS.contains(slot) && screen.getMenu().canDragTo(slot)) {
-            boolean applied = executeSlot(screen, slot, screen.getMenu().getCarried(), click.button());
-            dbg("drag: applied slot=" + slot.index + " -> " + applied);
+        // Nothing to do until a press armed the drag.
+        if (dragMode == null) {
+            return false;
         }
-        // Always swallow the motion while a QuickShulker drag is active. Returning false handed the event back to
-        // vanilla, whose quick-craft pass then clicked the same slot a second time - by then the stack was already
-        // inside the shulker, so that second click read as "take it back out". That is the insert/extract pair
-        // seen for every dragged slot.
-        return true;
+        Minecraft client = ((ScreenAccessor) screen).getClient();
+        AbstractContainerMenu handler = screen.getMenu();
+        ItemStack itemStack = handler.getCarried();
+        //#if MC >= 1.21.10
+        if(click.button() != InputConstants.MOUSE_BUTTON_RIGHT){
         //#else
-        //$$ return false;
+        //$$ if (button != 1) {
         //#endif
+            // Another button moving during a right-drag: swallow it instead of ending the drag or handing it to
+            // vanilla. Clearing the drag here would abort the transfer on any stray left-button release.
+            return true;
+        }
+        //#if MC >= 1.21.10
+        Slot slot = ((AbstractContainerScreenInvoker) screen).QS$getSlotAt(click.x(), click.y());
+        //#else
+        //$$ Slot slot = ((AbstractContainerScreenInvoker) screen).QS$getSlotAt(mouseX, mouseY);
+        //#endif
+        if (client.player != null && slot != null && (handler.canDragTo(slot) || slot.mayPickup(client.player))
+                && !DRAGGED_SLOTS.contains(slot)) {
+            // The direction was fixed by the press and stays for the whole drag; each slot is only checked against
+            // it. A slot that does not fit the direction (occupied during a take, empty during a put) is skipped
+            // rather than flipped.
+            boolean actionable = dragMode == DragMode.PUT
+                    ? slot.hasItem()
+                        && canInsertIntoContainer(client.player, itemStack, slot.getItem())
+                        && !ShulkerUtils.isShulkerItem(slot.getItem())
+                    : !slot.hasItem() && !isContainerEmpty(client.player, itemStack);
+            if (actionable) {
+                DRAGGED_SLOTS.add(slot);
+                //#if MC >= 26.1
+                //$$ ((AbstractContainerScreenInvoker) screen).QS$onMouseClick(slot, slot.index, toContainerButton(click.button()), ContainerInput.PICKUP);
+                //#elseif MC >= 1.21.10
+                ((AbstractContainerScreenInvoker) screen).QS$onMouseClick(slot, slot.index, toContainerButton(click.button()), ClickType.PICKUP);
+                //#else
+                //$$ ((AbstractContainerScreenInvoker) screen).QS$onMouseClick(slot, slot.index, toContainerButton(button), ClickType.PICKUP);
+                //#endif
+                dbg((dragMode == DragMode.PUT ? "put: slot=" : "take: slot=") + slot.index);
+            }
+        }
+        // Swallow every motion while a QuickShulker drag is running, including the ones that produced no click.
+        // Returning false handed those back to vanilla, whose quick-craft pass then dropped the carried container
+        // into the slot under the cursor - which is what emptied the player's hand mid-drag and killed the rest of
+        // the transfer.
+        return true;
     }
 
     //#if MC >= 1.21.10
@@ -242,11 +242,30 @@ public class MouseDraggedHandler {
     //#else
     //$$ public static boolean beforeMouseReleased(AbstractContainerScreen<?> screen, double mouseX, double mouseY, int button) {
     //#endif
-        dragMode = null;
-        PENDING.clear();
-        DRAGGED_SLOTS.clear();
+        if (!QuickShulkerMod.getConfig().supportsMouseDragged) return false;
+        // Marker cleanup lives here because this is the only place that knows a drag has ended; the flag set is
+        // owned by BundleHelper, which is also reached from the server side.
         BundleHelper.clearJustBundled();
-        return false;
+        //#if MC >= 1.21.10
+        int releasedButton = click.button();
+        //#else
+        //$$ int releasedButton = button;
+        //#endif
+        int draggedCount = DRAGGED_SLOTS.size();
+        boolean consumed = false;
+        // Only the right button ends the drag it started. A left-button release arrives on its own while the right
+        // button is still held, and clearing the state there aborted the transfer halfway through.
+        if (dragMode != null && releasedButton == InputConstants.MOUSE_BUTTON_RIGHT) {
+            draggedCount = DRAGGED_SLOTS.size();
+            dragMode = null;
+            if(draggedCount > 0){
+                DRAGGED_SLOTS.clear();
+                consumed = true;
+            }
+        }
+        dbg("release: button=" + releasedButton + " slots=" + draggedCount
+                + " consumed=" + consumed + " carriedEmpty=" + screen.getMenu().getCarried().isEmpty());
+        return consumed;
     }
 
     public static void beforeDrawForeground(AbstractContainerScreen<?> screen, GuiGraphics context, int mouseX, int mouseY) {
@@ -259,7 +278,7 @@ public class MouseDraggedHandler {
     }
 
     private enum DragMode {
-        BUNDLE,
-        UNBUNDLE
+        PUT,
+        TAKE
     }
 }

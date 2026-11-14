@@ -44,9 +44,25 @@ public class QuickOpenableRegistry {
     private static final HashMap<Class<? extends ItemLike>, QuickShulkerData> quickies = new HashMap<>();
 
     public static QuickShulkerData getQuickie(ItemLike item) {
+        // The enabled switches are read here, on every lookup, so toggling an item off in the config screen takes
+        // effect immediately instead of at the next restart.
+        QuickShulkerData data = getQuickieRaw(item);
+        if (data != null && !data.canOpen.getAsBoolean()) return null;
+        return data;
+    }
+
+    /**
+     * The registered data without consulting the enabled switches.
+     * <p>
+     * Needed to tell "this item was never a container" apart from "this item is a container the player turned off".
+     * The two cases have to behave differently on the client: the latter must swallow the right-click, otherwise the
+     * client reports PASS, vanilla sends the use-item packet anyway, and the server - which has its own config file -
+     * happily opens the menu the player disabled locally.
+     */
+    public static QuickShulkerData getQuickieRaw(ItemLike item) {
         if (item instanceof BlockItem) {
-            if (quickies.containsKey(((BlockItem) item).getBlock().getClass()))
-                return quickies.get(((BlockItem) item).getBlock().getClass());
+            QuickShulkerData byBlock = quickies.get(((BlockItem) item).getBlock().getClass());
+            if (byBlock != null) return byBlock;
         }
         return quickies.get(item.getClass());
     }
@@ -131,6 +147,17 @@ public class QuickOpenableRegistry {
             return this;
         }
 
+        /** Predicate read on every lookup; return false to make the item behave as if it were not registered. */
+        public Builder canOpen(java.util.function.BooleanSupplier canOpen) {
+            qsdata.canOpen = canOpen;
+            return this;
+        }
+
+        /**
+         * Kept so existing addons still compile. Has no effect any more: {@code Util.isOpenableItem} requires exactly
+         * one item in the stack for every container, regardless of this flag.
+         */
+        @SuppressWarnings("deprecation")
         public Builder ignoreSingleStackCheck(Boolean ignoreSingleStackCheck) {
             qsdata.ignoreSingleStackCheck = ignoreSingleStackCheck;
             return this;

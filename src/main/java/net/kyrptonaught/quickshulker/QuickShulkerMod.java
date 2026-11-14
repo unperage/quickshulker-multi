@@ -37,6 +37,7 @@ import net.kyrptonaught.quickshulker.compat.ModIds;
 import net.kyrptonaught.quickshulker.compat.ModUtils;
 import net.kyrptonaught.quickshulker.compat.reinfshulker.ReinfshulkerOpenableRegistry;
 import net.kyrptonaught.quickshulker.config.ConfigOptions;
+import net.kyrptonaught.quickshulker.command.QuickShulkerCommand;
 import net.kyrptonaught.quickshulker.event.EventListeners;
 import net.kyrptonaught.quickshulker.api.MenuFactory;
 import net.kyrptonaught.quickshulker.api.RegisterQuickShulker;
@@ -54,6 +55,7 @@ import net.minecraft.world.level.block.*;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.entity.player.Inventory;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.InteractionHand;
 //#if MC >= 1.21.2
@@ -85,6 +87,16 @@ public class QuickShulkerMod implements ModInitializer, RegisterQuickShulker {
     @Override
     public void onInitialize() {
         config.load();
+        ServerRules.init(LOGGER);
+        net.kyrptonaught.quickshulker.network.ClientSwitchesPacket.register();
+        net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.registerGlobalReceiver(
+                net.kyrptonaught.quickshulker.network.ClientSwitchesPacket.TYPE,
+                (payload, context) -> context.server().execute(() ->
+                        ClientSwitches.update(context.player(), payload.switches())));
+        net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents.DISCONNECT.register(
+                (handler, server) -> ClientSwitches.clear(handler.player));
+        net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback.EVENT.register(
+                (dispatcher, registryAccess, environment) -> QuickShulkerCommand.register(dispatcher));
         // Both shapes stay registered: a client on an older build sends the one-field packet under the
         // original channel, and decoding it with the newer codec would kick that player off the server.
         OpenShulkerPacketV1.registerReceivePacket();
@@ -92,28 +104,47 @@ public class QuickShulkerMod implements ModInitializer, RegisterQuickShulker {
         QuickBundlePacket.registerReceivePacket();
         CloseAllPacket.registerReceivePacket();
         EventListeners.registerEventListeners();
-        LOGGER.info("QuickShulker Multi is loaded.");
+        LOGGER.info("Unper's QuickShulker is loaded.");
 
         UseItemCallback.EVENT.register((player, world, hand) -> {
             ItemStack stack = player.getItemInHand(hand);
-            if (!world.isClientSide()) {
-                if (QuickShulkerMod.getConfig().rightClickToOpen) {
-                    if (Util.isOpenableItem(stack) && Util.canOpenInHand(stack)) {
-                        if (hand == InteractionHand.MAIN_HAND)
-                            //#if MC >= 1.21.5
-                            Util.openItem(player, 0, player.getInventory().getSelectedSlot(), true);
-                            //#else
-                            //$$ Util.openItem(player, 0, player.getInventory().selected, true);
-                            //#endif
-                        else Util.openItem(player, 0, Inventory.SLOT_OFFHAND, true);
-
-                        //#if MC >= 1.21.2
-                        return InteractionResult.SUCCESS_SERVER;
-                        //#else
-                        //$$ return InteractionResultHolder.success(stack);
-                        //#endif
-                    }
+            boolean openable = Util.isOpenableItem(stack);
+            boolean inHand = Util.canOpenInHand(stack);
+            if (QuickShulkerMod.getConfig().rightClickToOpen && openable && inHand) {
+                if (world.isClientSide()) {
+                    // The client has to agree with the server, otherwise it runs vanilla's "use item" for the same
+                    // click and predicts placing the block while the server is opening a menu. Returning SUCCESS
+                    // keeps the two sides on the same path; the menu itself still arrives from the server.
+                    //#if MC >= 1.21.2
+                    return InteractionResult.SUCCESS;
+                    //#else
+                    //$$ return InteractionResultHolder.success(stack);
+                    //#endif
                 }
+                if (hand == InteractionHand.MAIN_HAND)
+                    //#if MC >= 1.21.5
+                    Util.openItem(player, 0, player.getInventory().getSelectedSlot(), true, false);
+                    //#else
+                    //$$ Util.openItem(player, 0, player.getInventory().selected, true, false);
+                    //#endif
+                else Util.openItem(player, 0, Inventory.SLOT_OFFHAND, true, false);
+
+                //#if MC >= 1.21.2
+                return InteractionResult.SUCCESS_SERVER;
+                //#else
+                //$$ return InteractionResultHolder.success(stack);
+                //#endif
+            }
+            // A container the player turned off in their own settings: swallow the click on the client so vanilla
+            // never sends the use-item packet. Without this the server - reading its own config - would still open
+            // the menu, which is exactly how a disabled item kept opening.
+            if (world.isClientSide() && !openable
+                    && QuickOpenableRegistry.getQuickieRaw(stack.getItem()) != null) {
+                //#if MC >= 1.21.2
+                return InteractionResult.SUCCESS;
+                //#else
+                //$$ return InteractionResultHolder.success(stack);
+                //#endif
             }
             //#if MC >= 1.21.2
             return InteractionResult.PASS;
@@ -137,11 +168,17 @@ public class QuickShulkerMod implements ModInitializer, RegisterQuickShulker {
         //#endif
     }
 
-    private void registerMenuBlock(boolean enabled, Class<? extends Block> blockClass, Component title, MenuFactory factory) {
-        if (!enabled) return;
+    /**
+     * Always registers, with the config switch attached as a live predicate. Dropping the registration when the
+     * switch was off at launch meant the item stayed openable (or stayed dead) until a restart, because the registry
+     * is only filled once.
+     */
+    private void registerMenuBlock(java.util.function.BooleanSupplier enabled, Block block, Component title, MenuFactory factory) {
+        ServerRules.register(block, block.asItem());
         new QuickOpenableRegistry.Builder()
-                .setItem(blockClass)
+                .setItem(block.getClass())
                 .ignoreSingleStackCheck(true)
+                .canOpen(enabled)
                 .setOpenAction((player, stack) ->
                         player.openMenu(new SimpleMenuProvider((i, playerInventory, playerEntity) ->
                                 factory.create(i, playerInventory, createAccess(playerEntity)), title)))
@@ -150,7 +187,8 @@ public class QuickShulkerMod implements ModInitializer, RegisterQuickShulker {
 
     @Override
     public void registerProviders() {
-        if (getConfig().quickShulkerBox)
+        if (getConfig().quickShulkerBox) {
+            ServerRules.register(Blocks.SHULKER_BOX, Items.SHULKER_BOX);
             new QuickOpenableRegistry.Builder()
                     .setItem(ShulkerBoxBlock.class)
                     .supportsBundleing(true)
@@ -160,8 +198,10 @@ public class QuickShulkerMod implements ModInitializer, RegisterQuickShulker {
                                     new ShulkerBoxMenu(i, player.getInventory(), new ItemStackInventory(stack, 27)),
                                     stack.getComponents().has(DataComponents.CUSTOM_NAME) ? stack.getHoverName() : Component.translatable("container.shulkerBox")))))
                     .register();
+        }
 
-        if (getConfig().quickEChest)
+        if (getConfig().quickEChest) {
+            ServerRules.register(Blocks.ENDER_CHEST, Items.ENDER_CHEST);
             new QuickOpenableRegistry.Builder(new QuickShulkerData.QuickEnderData())
                     .setItem(EnderChestBlock.class)
                     .supportsBundleing(true)
@@ -171,19 +211,29 @@ public class QuickShulkerMod implements ModInitializer, RegisterQuickShulker {
                             player.openMenu(new SimpleMenuProvider((i, playerInventory, playerEntity) ->
                                     ChestMenu.threeRows(i, playerInventory, player.getEnderChestInventory()), Component.translatable("container.enderchest")))))
                     .register();
+        }
 
-        registerMenuBlock(getConfig().quickCraftingTables,  CraftingTableBlock.class,
+        registerMenuBlock(() -> getConfig().quickCraftingTables,  Blocks.CRAFTING_TABLE,
                 Component.translatable("container.crafting"),           CraftingMenu::new);
-        registerMenuBlock(getConfig().quickStonecutter,     StonecutterBlock.class,
+        registerMenuBlock(() -> getConfig().quickStonecutter,     Blocks.STONECUTTER,
                 Component.translatable("container.stonecutter"),        StonecutterMenu::new);
-        registerMenuBlock(getConfig().quickAnvil,           AnvilBlock.class,
+        registerMenuBlock(() -> getConfig().quickAnvil,           Blocks.ANVIL,
                 Component.translatable("container.repair"),             AnvilMenu::new);
-        registerMenuBlock(getConfig().quickGrindstone,      GrindstoneBlock.class,
+        // Chipped and damaged anvils are separate items (not block states), so /uqs has to know all three or
+        // "all" silently misses two of them. They share AnvilBlock, so item lookup already resolves them to the
+        // same openable entry; this only adds their ids to the server's allow list.
+        ServerRules.register(Blocks.CHIPPED_ANVIL, Items.CHIPPED_ANVIL);
+        ServerRules.register(Blocks.DAMAGED_ANVIL, Items.DAMAGED_ANVIL);
+
+        registerMenuBlock(() -> getConfig().quickGrindstone,      Blocks.GRINDSTONE,
                 Component.translatable("container.grindstone_title"),   GrindstoneMenu::new);
-        registerMenuBlock(getConfig().quickSmithingTable,   SmithingTableBlock.class,
+        registerMenuBlock(() -> getConfig().quickSmithingTable,   Blocks.SMITHING_TABLE,
                 Component.translatable("container.upgrade"),            SmithingMenu::new);
-        registerMenuBlock(getConfig().quickLoom,            LoomBlock.class,
+        registerMenuBlock(() -> getConfig().quickLoom,            Blocks.LOOM,
                 Component.translatable("container.loom"),               LoomMenu::new);
+        // Runs last so every provider is already registered: catches the dyed shulker boxes, the two extra anvil
+        // items, and anything a compatible mod registered under an existing block class.
+        ServerRules.scanRegistry();
 
         //#if MC < 26.1
         if (ModUtils.isModLoad(ModIds.reinfshulker) && QuickShulkerMod.getConfig().quickShulkerBox) {

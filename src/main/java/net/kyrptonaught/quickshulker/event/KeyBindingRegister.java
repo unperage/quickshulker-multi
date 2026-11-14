@@ -29,6 +29,7 @@ package net.kyrptonaught.quickshulker.event;
 
 import net.kyrptonaught.kyrptconfig.keybinding.DisplayOnlyKeyBind;
 import net.kyrptonaught.quickshulker.QuickShulkerMod;
+import net.kyrptonaught.quickshulker.client.KeybindManager;
 //#if MC >= 26.1
 //$$ import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 //#else
@@ -57,6 +58,9 @@ public class KeyBindingRegister {
     public static void reapplyConfiguredKeys() {
         for (DisplayOnlyKeyBind bind : REGISTERED) {
             bind.syncFromConfig();
+            // Only now may the controls screen write through: everything before this point comes from Options
+            // feeding the mapping a key it read from options.txt, which has no entry for these bindings.
+            bind.markReady();
         }
     }
 
@@ -72,13 +76,13 @@ public class KeyBindingRegister {
         REGISTERED.add(setup(new DisplayOnlyKeyBind(
                 "key.quickshulker.config.openSettingGui",
                 MAIN,
-                QuickShulkerMod.getConfig().openSettingGui,
+                KeybindManager.openSettings(),
                 setKey -> QuickShulkerMod.config.save()
         )));
         REGISTERED.add(setup(new DisplayOnlyKeyBind(
                 "key.quickshulker.config.keybinding",
                 MAIN,
-                QuickShulkerMod.getConfig().keybinding,
+                KeybindManager.openItem(),
                 setKey -> QuickShulkerMod.config.save()
         )));
     }

@@ -116,7 +116,7 @@ publishing {
         mavenLocal()
         maven {
             name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/unperage/QuickShulker-Pro")
+            url = uri("https://maven.pkg.github.com/unperage/unpers-quickshulker")
             credentials {
                 username = System.getenv("GH_USERNAME")
                 password = System.getenv("GH_TOKEN")

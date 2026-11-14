@@ -8,7 +8,7 @@
     "reinfshulker.ReinforcedShulkerBoxBlockMixin"
   ],
   "client": [
-    "mousetweaks.GuiContainerHandlerMixin"
+    "mousetweaks.MouseTweaksMainMixin"
   ],
   "injectors": {
     "defaultRequire": 1

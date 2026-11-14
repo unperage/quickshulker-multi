@@ -1,6 +1,6 @@
 # Third Party Notices
 
-This project, **QuickShulker-Multi**, includes or is derived from code from the following third-party open source projects.
+This project, **Unper's QuickShulker**, includes or is derived from code from the following third-party open source projects.
 
 ## Upstream Projects
 

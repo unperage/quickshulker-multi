@@ -66,7 +66,7 @@ public record OpenShulkerPacketV1(int invSlot) implements CustomPacketPayload {
     public static void registerReceivePacket() {
         PayloadTypeRegistry.playC2S().register(OpenShulkerPacketV1.OPEN_SHULKER_PACKET_V1_ID, OpenShulkerPacketV1.CODEC);
         ServerPlayNetworking.registerGlobalReceiver(OpenShulkerPacketV1.OPEN_SHULKER_PACKET_V1_ID,
-                (payload, context) -> context.server().execute(() -> Util.openItem(context.player(), payload.invSlot(), false)));
+                (payload, context) -> context.server().execute(() -> Util.openItem(context.player(), payload.invSlot(), false, true)));
     }
 
     @Override

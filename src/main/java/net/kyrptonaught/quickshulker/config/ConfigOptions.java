@@ -29,15 +29,22 @@ package net.kyrptonaught.quickshulker.config;
 
 import lib.blue.endless.jankson.Comment;
 import net.kyrptonaught.kyrptconfig.config.AbstractConfigFile;
-import net.kyrptonaught.kyrptconfig.keybinding.CustomKeyBinding;
 import net.kyrptonaught.quickshulker.QuickShulkerMod;
 
 public class ConfigOptions implements AbstractConfigFile {
     public static String defualtKeybind = "key.keyboard.k";
+    /**
+     * Key bindings are stored as raw key names ("key.keyboard.k"), never as CustomKeyBinding objects.
+     * <p>
+     * A CustomKeyBinding field only survives a restart when its fromJson hook runs; if it does not, the field keeps
+     * the value the freshly constructed ConfigOptions gave it - the default. A plain String has no such failure mode,
+     * so the settings file is now the single source of truth and {@code KeybindManager} builds the runtime bindings
+     * from these strings.
+     */
     @Comment("Activation key")
-    public CustomKeyBinding keybinding = CustomKeyBinding.configDefault(QuickShulkerMod.MOD_ID, "key.keyboard.k");
+    public String keybinding = "key.keyboard.k";
     @Comment("Open setting gui key")
-    public CustomKeyBinding openSettingGui = CustomKeyBinding.configDefault(QuickShulkerMod.MOD_ID, "key.keyboard.keypad.add");
+    public String openSettingGui = "key.keyboard.keypad.add";
     @Comment("Right Clicking with shulker in hand opens it")
     public boolean rightClickToOpen = true;
     @Comment("Hitting the keybind with shulker in hand opens it")
@@ -64,12 +71,18 @@ public class ConfigOptions implements AbstractConfigFile {
 
     @Comment("Move the cursor onto the slot the new container came from when quick-switching")
     public boolean cursorFollow = true;
-    @Comment("Extra key: hold it with the keybind to open a container that sits inside another container, and hold it while closing to leave the whole chain at once")
-    public CustomKeyBinding extraKey = CustomKeyBinding.configDefault(QuickShulkerMod.MOD_ID, "key.keyboard.left.shift");
-    @Comment("Allow quick-opening containers held inside another container (needs the extra key)")
+    @Comment("Key for quick-opening containers held inside another container. Hold it while using the keybind on a nested container")
+    public String nestedKey = "key.keyboard.left.shift";
+    @Comment("Allow quick-opening containers held inside another container (needs the nested key)")
     public boolean crossContainerOpen = false;
-    @Comment("Quick-opened containers stack on top of the current screen: closing returns to the previous one (extra key while closing leaves them all)")
+    @Comment("Key for the remembered-container chain. In Hold mode hold it while closing, in Toggle mode press it once to flip the state")
+    public String memoryKey = "key.keyboard.left.control";
+    @Comment("Quick-opened containers stack on top of the current screen: closing returns to the previous one (memory key closes the whole chain)")
     public boolean nestedScreens = false;
+    @Comment("How the memory key closes the whole chain: false = hold it while closing, true = press it once to toggle the mode")
+    public boolean nestedMode = false;
+    @Comment("Current state of the toggle: true = closing leaves the whole chain, false = closing steps back one level")
+    public boolean closeAllToggled = false;
 
     @Comment("Enable opening Shulker Boxes")
     public boolean quickShulkerBox = true;
@@ -88,4 +101,16 @@ public class ConfigOptions implements AbstractConfigFile {
     @Comment("Enable opening Grindstone")
     public boolean quickGrindstone = true;
 
+    /**
+     * The per-item switches in the order {@code ClientSwitches} and the sync packet expect.
+     * <p>
+     * Kept here so the client sends exactly the values the config screen edits, and so the ordering lives next to the
+     * fields rather than being duplicated in the networking code.
+     */
+    public boolean[] switchArray() {
+        return new boolean[]{
+                quickShulkerBox, quickCraftingTables, quickStonecutter, quickEChest,
+                quickSmithingTable, quickLoom, quickAnvil, quickGrindstone
+        };
+    }
 }

@@ -31,6 +31,7 @@ import net.kyrptonaught.quickshulker.QuickShulkerMod;
 import net.kyrptonaught.quickshulker.client.ClientUtil;
 import net.kyrptonaught.quickshulker.config.ConfigOptions;
 import net.kyrptonaught.quickshulker.config.ModConfigMenu;
+import net.kyrptonaught.quickshulker.client.KeybindManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.entity.player.Player;
@@ -40,14 +41,22 @@ public class ModKeyCallback {
     public static void onKeyPressed(ClientLevel clientWorld) {
         Minecraft mc = Minecraft.getInstance();
         ConfigOptions configs = QuickShulkerMod.getConfig();
-        if (configs.openSettingGui.wasPressed()) {
+        // Toggle the remembered-container chain: the memory key is pressed once anywhere and flips the "leave
+        // everything" state, instead of having to be held down while closing. Checked every tick, screen open or
+        // not. The state is a config field (not a runtime flag) so it survives a restart, and it is written through
+        // immediately. Nested containers use their own key (ConfigOptions.nestedKey) and are unaffected.
+        if (configs.nestedScreens && configs.nestedMode && KeybindManager.memory().wasPressed()) {
+            configs.closeAllToggled = !configs.closeAllToggled;
+            QuickShulkerMod.config.save();
+        }
+        if (KeybindManager.openSettings().wasPressed()) {
             //#if MC >= 26.2
             //$$ mc.gui.setScreen(ModConfigMenu.getModConfigMenu(mc.gui.screen()));
             //#else
             mc.setScreen(ModConfigMenu.getModConfigMenu(mc.screen));
             //#endif
         }
-        if (configs.keybinding.wasPressed()) {
+        if (KeybindManager.openItem().wasPressed()) {
             Player player = mc.player;
             //#if MC >= 26.2
             //$$ if (mc.gui.screen() == null && QuickShulkerMod.getConfig().keybind && player != null && !player.isSpectator()) {

@@ -54,10 +54,35 @@ public abstract class ItemMixin {
      * flavoured (client-only types in its signatures), while this mixin is applied on a dedicated server
      * too. Touching it there is what produced NoClassDefFoundError at runtime.
      */
-    private static final boolean QS_DEBUG = Boolean.getBoolean("quickshulker.debug.drag");
+    /** TEMPORARY: tracing is on by default while the unbundle failure is being chased. */
+    private static final boolean QS_DEBUG = false;
 
     private static void qsDebug(String message) {
         if (QS_DEBUG) System.out.println("[QS-DRAG] " + message);
+    }
+
+    /**
+     * Caller chain for PRIMARY clicks. The window is deliberately wider than before: the frame that explains where
+     * the click came from sits deeper than ten entries (slotClicked -> RecipeBookScreen -> mouseClicked/mouseDragged),
+     * and cutting it off hid the actual origin.
+     */
+    private static String stackTrace() {
+        StackTraceElement[] frames = Thread.currentThread().getStackTrace();
+        StringBuilder sb = new StringBuilder();
+        int printed = 0;
+        for (StackTraceElement frame : frames) {
+            String cls = frame.getClassName();
+            if (cls.startsWith("java.") || cls.startsWith("jdk.") || cls.startsWith("org.spongepowered")
+                    || cls.startsWith("com.llamalad7")) {
+                continue;
+            }
+            if (frame.getMethodName().startsWith("getStackTrace") || frame.getMethodName().equals("stackTrace")) {
+                continue;
+            }
+            sb.append("\n        at ").append(frame);
+            if (++printed >= 24) break;
+        }
+        return sb.toString();
     }
 
     @Inject(method = "overrideOtherStackedOnMe", at = @At("HEAD"), cancellable = true)
@@ -94,6 +119,12 @@ public abstract class ItemMixin {
                         + " host=" + hostStack.getItem().getDescriptionId() + "x" + hostStack.getCount() + " insert=" + insertStack.getItem().getDescriptionId() + "x" + insertStack.getCount()
                         + " bundle=" + BundleHelper.shouldAttemptBundle(player, clickType, hostStack, insertStack, true)
                         + " unbundle=" + BundleHelper.shouldAttemptUnBundle(player, clickType, hostStack, insertStack, true));
+                // A left click arriving in the middle of a right-drag is the anomaly under investigation: it is not
+                // issued by QuickShulker (that one is always SECONDARY). Printing the caller chain for PRIMARY clicks
+                // shows which mod or vanilla path produced it, without guessing.
+                if (clickType == ClickAction.PRIMARY) {
+                    qsDebug("PRIMARY click origin:\n" + stackTrace());
+                }
             }
             if (BundleHelper.shouldAttemptBundle(player, clickType, hostStack, insertStack, QuickShulkerMod.getConfig().supportsBundlingPickup)) {//bundle stack into held item
                 if (ShulkerUtils.isShulkerItem(hostStack) || !player.level().isClientSide()) {
@@ -109,6 +140,17 @@ public abstract class ItemMixin {
                     QuickBundlePacket.UnbundlePacket.sendPacket(ClientUtil.getPlayerInvSlot(player.containerMenu, slot), hostStack);
                     BundleHelper.unbundleStackIntoSlot(player, hostStack, slot, cir);
                 }
+            } else if (QuickShulkerMod.getConfig().supportsBundlingExtract
+                    && clickType == ClickAction.SECONDARY
+                    && insertStack.isEmpty()
+                    && Boolean.TRUE.equals(net.kyrptonaught.quickshulker.api.Util.isOpenableItem(hostStack))
+                    && net.kyrptonaught.quickshulker.api.Util.getQuickItemInventory(player, hostStack) != null) {
+                // The container on the cursor ran dry: shouldAttemptUnBundle() refuses once its inventory is empty,
+                // and the click then falls through to vanilla - which simply puts the carried container into the
+                // empty slot. That is what emptied the player's hand mid-drag and killed the rest of the transfer
+                // ("takes one out, immediately puts it back, then nothing works"). Swallow the click instead; the
+                // drag continues and the next slot gets a chance.
+                if (cir != null) cir.setReturnValue(true);
             }
         } catch (Throwable t) {
             System.err.println("[QuickShulker] overrideStackedOnOther failed, ignoring: " + t);

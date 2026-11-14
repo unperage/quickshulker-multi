@@ -40,7 +40,25 @@ import java.util.function.BiFunction;
 public class QuickShulkerData {
     public BiConsumer<Player, ItemStack> openConsumer;
     public boolean supportsBundleing = false;
+    /**
+     * Retained for source compatibility only - it is no longer consulted.
+     * <p>
+     * {@code Util.isOpenableItem} now requires exactly one item in the stack for every container, so stackable
+     * containers (workbench, ender chest, ...) cannot be opened while more than one sits in the hand or the slot.
+     * Opening one out of a stack would mean silently picking a copy and leaving the rest, which was never
+     * intentional behaviour.
+     */
+    @Deprecated
     public boolean ignoreSingleStackCheck = false;
+    /**
+     * Evaluated on every lookup, not once at registration.
+     * <p>
+     * The "enabled items" config switches used to be read only while the registry was being filled at startup, so
+     * turning an item off in the config screen had no effect until the game was restarted. Keeping the predicate on
+     * the data lets {@code getQuickie} answer with the current setting instead of the one that was live at launch.
+     */
+    public java.util.function.BooleanSupplier canOpen = () -> true;
+
     public boolean canOpenInHand = true;
     BiFunction<Player, ItemStack, Container> bundleInvGetter;
     BiFunction<ItemStack, Boolean, SoundEvent> soundGetter;

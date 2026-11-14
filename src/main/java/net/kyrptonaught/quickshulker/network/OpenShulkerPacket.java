@@ -41,11 +41,18 @@ import net.minecraft.resources.Identifier;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * @param invSlot the menu slot to open, negative for a slot that lives in another container
- * @param nest    whether the client wants this open to be stacked, so closing it returns to the previous screen.
- *                The setting lives on the client, so it has to travel with the request - the server cannot read it.
+ * @param invSlot    the menu slot to open, negative for a slot that lives in another container
+ * @param nest       whether the client wants this open to be stacked, so closing it returns to the previous screen.
+ *                   The setting lives on the client, so it has to travel with the request - the server cannot read it.
+ * @param fromScreen whether the request was made while a screen was open (inventory, creative inventory, another
+ *                   container) rather than from the world with the item in hand. The server cannot tell these apart:
+ *                   {@code player.containerMenu} is the InventoryMenu in both cases, because that is what the server
+ *                   keeps for a player who is walking around. Only the client knows whether the mouse was over a slot
+ *                   on an open screen. Without this flag, closing a container opened from the world would return to
+ *                   the inventory instead of the game, and closing one opened from the inventory would drop straight
+ *                   out to the game.
  */
-public record OpenShulkerPacket(int invSlot, boolean nest) implements CustomPacketPayload {
+public record OpenShulkerPacket(int invSlot, boolean nest, boolean fromScreen) implements CustomPacketPayload {
 
     //#if MC <= 1.20.6
     //$$ public static final ResourceLocation OPEN_SHULKER_PACKET = ResourceLocation.tryBuild(QuickShulkerMod.MOD_ID, "open_shulker_packet_v2");
@@ -61,18 +68,19 @@ public record OpenShulkerPacket(int invSlot, boolean nest) implements CustomPack
             (value, buf) -> {
                 buf.writeInt(value.invSlot);
                 buf.writeBoolean(value.nest);
+                buf.writeBoolean(value.fromScreen);
             },
-            buf -> new OpenShulkerPacket(buf.readInt(), buf.readBoolean()));
+            buf -> new OpenShulkerPacket(buf.readInt(), buf.readBoolean(), buf.readBoolean()));
 
     public static void registerReceivePacket() {
         PayloadTypeRegistry.playC2S().register(OpenShulkerPacket.OPEN_SHULKER_PACKET_ID, OpenShulkerPacket.CODEC);
         PayloadTypeRegistry.playS2C().register(OpenShulkerPacket.OPEN_SHULKER_PACKET_ID, OpenShulkerPacket.CODEC);
-        ServerPlayNetworking.registerGlobalReceiver(OpenShulkerPacket.OPEN_SHULKER_PACKET_ID, (payload, context) -> context.server().execute(() -> Util.openItem(context.player(), payload.invSlot(), payload.nest())));
+        ServerPlayNetworking.registerGlobalReceiver(OpenShulkerPacket.OPEN_SHULKER_PACKET_ID, (payload, context) -> context.server().execute(() -> Util.openItem(context.player(), payload.invSlot(), payload.nest(), payload.fromScreen())));
     }
 
     @Environment(EnvType.CLIENT)
-    public static void sendOpenPacket(int invSlot, boolean nest) {
-        ClientPlayNetworking.send(new OpenShulkerPacket(invSlot, nest));
+    public static void sendOpenPacket(int invSlot, boolean nest, boolean fromScreen) {
+        ClientPlayNetworking.send(new OpenShulkerPacket(invSlot, nest, fromScreen));
     }
 
     @Override
